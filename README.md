@@ -60,6 +60,37 @@ Beyond that, some networks (eduroam, strict carriers) block direct WebRTC connec
   and enter `appname:apikey`. It is saved on the laptop and embedded in the QR code,
   so all phones use the relay automatically.
 
+## Fully offline: local network mode + Mac hotspot
+
+No internet at the venue? The kit in this folder runs everything offline:
+
+1. Copy this whole folder onto the host MacBook.
+2. Double-click **`start-workshop-hotspot.command`** (first run: right-click → Open).
+   It creates the Wi-Fi hotspot **CSupMNE-Workshop** (password `workshop_game`),
+   starts the local game server, and prints the game addresses.
+   **Ctrl+C stops hotspot and server.**
+3. Open the printed address (e.g. `http://192.168.2.1:8080/backup/`) on the laptop,
+   choose **🏠 Local network** in the game — the QR appears.
+4. Participants join the hotspot Wi-Fi, ignore the "no internet" warning,
+   and scan the QR. Everything runs on the laptop; no brokers, no TURN, no internet.
+
+Notes:
+- **Disconnect from any Wi-Fi network first** (⌥-click the Wi-Fi menu icon →
+  Disconnect). A Mac cannot be a hotspot and a Wi-Fi client at the same time —
+  this is the #1 reason the hotspot silently fails to start.
+- macOS has no official CLI for Internet Sharing. The script tries two scripted
+  start methods and, if macOS blocks them, opens the Sharing pane so you toggle
+  Internet Sharing ON once ("Internetfreigabe" on German systems) — it detects
+  the hotspot and does everything else, including shutdown on Ctrl+C.
+- If the hotspot name/password don't apply on your macOS version, set them once
+  in *System Settings → General → Sharing → Internet Sharing (ⓘ)*.
+- No-hotspot Plan B: use any phone's personal hotspot — laptop and all phones
+  join it, run `python3 server.py` in this folder, open the printed address.
+  Same game, same QR, zero macOS quirks.
+- The server (`server.py`) needs Python 3 (comes with Apple's command line tools).
+- You can also use local mode on any existing Wi-Fi/LAN without the hotspot:
+  `python3 server.py` in this folder, then open the printed address.
+
 ## Updating the games
 
 Replace `backup/index.html` or `flaw/index.html` with a new version and commit.

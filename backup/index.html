@@ -362,6 +362,12 @@
       <h3>Classic — one screen</h3>
       <p>No phones, no network, zero risk: teams discuss on paper, you click their choices in on the beamer. Works offline from a double-clicked file.</p>
     </button>
+    <button class="modecard" onclick="chooseLocalMode()">
+      <span class="mic">🏠</span>
+      <h3>Local network <span class="chip navy" style="vertical-align:3px;">OFFLINE</span></h3>
+      <p>Fully offline: run the hotspot kit (start-workshop-hotspot.command) on this laptop, phones join its Wi-Fi and scan the QR. No internet needed at all.
+      <span id="localModeNote" style="color:var(--gold); font-weight:700;"></span></p>
+    </button>
   </div>
   <div id="classicSetup" style="display:none;">
     <h2 class="h-md" style="margin-bottom:6px;">How many teams?</h2>
@@ -782,6 +788,7 @@ const SAVE_KEY = 'csupmne-strg-v2';
 const PEER_PREFIX = 'csmne-strg-v2-';
 const ROOM_PARAM = new URLSearchParams(location.search).get('room');
 const IS_JOIN = !!ROOM_PARAM;
+const IS_LOCAL = new URLSearchParams(location.search).get('local') === '1';
 
 let state = freshState();
 
@@ -872,6 +879,10 @@ function resumeGame(){
   renderTeamSetup();
   if (state.mode === 'classic') document.getElementById('classicSetup').style.display = '';
   if (state.mode === 'net' && state.roomCode) loadTurn().finally(() => hostStartNet(state.roomCode));
+  if (state.mode === 'local' && state.roomCode) localPing().then(j => {
+    if (j){ localSrv.ip = j.ip || location.hostname; localSrv.port = j.port || location.port; localHostStart(); renderLobbySafe(); }
+    else { net.error = 'local server not running \u2014 start the hotspot kit'; renderLobbySafe(); }
+  });
   if (state.phase === 'scr-build') renderBuild();
   if (state.phase === 'scr-disaster') renderDisaster();
   if (state.phase === 'scr-podium') renderPodium();
@@ -907,7 +918,7 @@ function renderTeamSetup(){
   const btns = document.getElementById('teamCountBtns');
   if (!btns) return;
   btns.innerHTML = '';
-  for (let n=2; n<=6; n++){
+  for (let n=1; n<=6; n++){
     const b = document.createElement('button');
     b.textContent = n;
     b.className = (n === state.teamCount) ? 'sel' : '';
@@ -943,7 +954,7 @@ function applyTeams(){
 function renderLobby(){
   const btns = document.getElementById('lobbyCountBtns');
   btns.innerHTML = '';
-  for (let n=2; n<=6; n++){
+  for (let n=1; n<=6; n++){
     const b = document.createElement('button');
     b.textContent = n;
     b.className = (n === state.teamCount) ? 'sel' : '';
@@ -963,7 +974,9 @@ function renderLobby(){
   const pill = document.getElementById('roomPill');
   if (state.roomCode){ pill.style.display=''; pill.textContent = 'ROOM ' + state.roomCode; }
   const rs = document.getElementById('roomStatus');
-  if (rs) rs.textContent = net.error ? '\u2717 room problem \u2014 see note above' : (net.open ? '\u2713 room open \u2014 phones can join' : ('\u2026 opening room \u00b7 broker ' + ((net.brokerIdx || 0) + 1) + '/' + BROKERS.length));
+  if (rs) rs.textContent = state.mode === 'local'
+    ? (net.error ? '\u2717 ' + net.error : '\u2713 local room open \u2014 phones join via the hotspot Wi-Fi')
+    : (net.error ? '\u2717 room problem \u2014 see note above' : (net.open ? '\u2713 room open \u2014 phones can join' : ('\u2026 opening room \u00b7 broker ' + ((net.brokerIdx || 0) + 1) + '/' + BROKERS.length)));
   const tin = document.getElementById('turnInput');
   if (tin && !tin.value){ try{ tin.value = localStorage.getItem(TURN_KEY_STORE) || ''; }catch(e){} }
   const bt = document.getElementById('buildTag');
@@ -979,9 +992,13 @@ function renderLobby(){
     urlEl.textContent = '';
   } else if (state.roomCode){
     const cred = turnCred();
-    const joinUrl = location.href.split(/[?#]/)[0] + '?room=' + state.roomCode +
-      (state.brokerIdx ? '&b=' + state.brokerIdx : '') +
-      (cred && cred.includes(':') ? '&tr=' + encodeURIComponent(cred) : '');
+    const joinUrl = (state.mode === 'local')
+      ? ('http://' + (localSrv.ip || location.hostname) +
+         ((localSrv.port && String(localSrv.port) !== '80') ? ':' + localSrv.port : '') +
+         location.pathname + '?room=' + state.roomCode + '&local=1')
+      : (location.href.split(/[?#]/)[0] + '?room=' + state.roomCode +
+        (state.brokerIdx ? '&b=' + state.brokerIdx : '') +
+        (cred && cred.includes(':') ? '&tr=' + encodeURIComponent(cred) : ''));
     urlEl.textContent = joinUrl;
     try{
       const qr = qrcode(0, 'M');
@@ -1299,6 +1316,109 @@ async function runSelfTest(){
   out.innerHTML = rows.join('');
 }
 
+/* =====================================================================
+   LOCAL NETWORK MODE — offline transport via server.py (HTTP relay)
+   ===================================================================== */
+const localSrv = { on:false, ip:null, port:null, seq:0, timer:null, fails:0, sig:'' };
+
+async function localPing(){
+  try{
+    const ctl = new AbortController();
+    setTimeout(() => ctl.abort(), 2500);
+    const r = await fetch('/api/ping', {signal:ctl.signal, cache:'no-store'});
+    const j = await r.json();
+    return (j && j.ok) ? j : null;
+  }catch(e){ return null; }
+}
+
+function chooseLocalMode(){
+  const note = document.getElementById('localModeNote');
+  note.textContent = ' checking for the local server…';
+  localPing().then(j => {
+    if (!j){
+      note.textContent = ' Local server not found — start the hotspot kit first, then open the game via the address it prints (not from GitHub / not as a file).';
+      return;
+    }
+    note.textContent = '';
+    localSrv.ip = j.ip || location.hostname;
+    localSrv.port = j.port || location.port;
+    state.mode = 'local';
+    ensureTeams(state.teamCount);
+    state.roomCode = state.roomCode || genRoomCode();
+    localHostStart();
+    renderLobby();
+    showScreen('scr-lobby');
+  });
+}
+
+function localHostStart(){
+  localSrv.on = true;
+  net.open = true;
+  net.error = null;
+  localPush();
+  clearInterval(localSrv.timer);
+  localSrv.timer = setInterval(localPollActions, 700);
+}
+
+function localPush(){
+  if (!localSrv.on) return;
+  try{
+    fetch('/api/host', {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({room: state.roomCode, snap: snapshot()})}).catch(()=>{});
+  }catch(e){}
+}
+
+async function localPollActions(){
+  if (!localSrv.on) return;
+  try{
+    const r = await fetch('/api/actions?room=' + encodeURIComponent(state.roomCode) + '&since=' + localSrv.seq, {cache:'no-store'});
+    const j = await r.json();
+    if (localSrv.fails >= 5){ net.error = null; renderLobbySafe(); }
+    localSrv.fails = 0;
+    net.liveCids = new Set(j.live || []);
+    if (j.actions && j.actions.length){
+      for (const a of j.actions) hostHandleMsg({cid:a.cid, conn:{send:()=>{}}}, a.msg);
+    }
+    localSrv.seq = j.seq || localSrv.seq;
+    const sig = JSON.stringify([state.roster, j.live || []]);
+    if (sig !== localSrv.sig){
+      localSrv.sig = sig;
+      renderLobbySafe();
+    }
+  }catch(e){
+    if (++localSrv.fails === 5){ net.error = 'lost contact with the local server — is it still running?'; renderLobbySafe(); }
+  }
+}
+
+/* participant side (phones) */
+let localPollTimer = null, localFails = 0, localV = 0;
+function localClientStart(){
+  setConn('', 'connecting…');
+  const poll = async () => {
+    try{
+      const r = await fetch('/api/state?room=' + encodeURIComponent(ROOM_PARAM.toUpperCase()) +
+        '&v=' + localV + '&cid=' + encodeURIComponent(pj.cid), {cache:'no-store'});
+      const j = await r.json();
+      localFails = 0;
+      if (!j.exists){
+        setConn('bad','room not found — is the host screen open?');
+      } else {
+        setConn('ok','connected · room ' + ROOM_PARAM.toUpperCase());
+        if (j.v && j.v !== localV){
+          localV = j.v;
+          if (j.snap){ pj.snap = j.snap; pRender(); }
+        }
+      }
+    }catch(e){
+      if (++localFails >= 3) setConn('bad','no link — is this phone on the workshop Wi-Fi?');
+    }
+  };
+  poll();
+  clearInterval(localPollTimer);
+  localPollTimer = setInterval(poll, 800);
+}
+
+
 
 
 function genRoomCode(){
@@ -1375,6 +1495,7 @@ function hostStartNet(code){
 }
 
 function rebuildLive(){
+  if (state.mode === 'local') return;
   net.liveCids = new Set();
   for (const {cid} of net.conns.values()) if (cid) net.liveCids.add(cid);
 }
@@ -1421,6 +1542,7 @@ function snapshot(){
 
 function sendTo(conn){ try{ conn.send(snapshot()); }catch(e){} }
 function netBroadcast(){
+  if (state.mode === 'local'){ localPush(); return; }
   if (IS_JOIN || !net.conns.size) return;
   const snap = snapshot();
   for (const {conn} of net.conns.values()){ try{ conn.send(snap); }catch(e){} }
@@ -1541,6 +1663,7 @@ function scheduleRetry(fast){
 
 /* heartbeat: keeps the link warm and detects silent drops (locked phones, Wi-Fi sleep) */
 setInterval(() => {
+  if (IS_LOCAL) return;
   if (!IS_JOIN || !pj.conn || !pj.conn.open) return;
   pSend({t:'ping'});
   if (Date.now() - (pj.lastMsg || 0) > 25000){
@@ -1550,12 +1673,21 @@ setInterval(() => {
 }, 10000);
 /* when the phone wakes from lock, verify the link immediately */
 document.addEventListener('visibilitychange', () => {
+  if (IS_LOCAL) return;
   if (!IS_JOIN || document.visibilityState !== 'visible') return;
   if (pj.conn && pj.conn.open && Date.now() - (pj.lastMsg || 0) < 15000){ pSend({t:'hi'}); return; }
   scheduleRetry(true);
 });
 
-function pSend(m){ try{ pj.conn && pj.conn.open && pj.conn.send(m); }catch(e){} }
+function pSend(m){
+  if (IS_LOCAL){
+    try{
+      fetch('/api/action', {method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({room: ROOM_PARAM.toUpperCase(), cid: pj.cid, msg: m})}).catch(()=>{});
+    }catch(e){}
+    return;
+  }
+  try{ pj.conn && pj.conn.open && pj.conn.send(m); }catch(e){} }
 
 function pJoin(){
   const name = document.getElementById('pName').value.trim() || 'Player';
@@ -1762,7 +1894,7 @@ function beep(){
     pj.b0 = parseInt(new URLSearchParams(location.search).get('b') || '0', 10) || 0;
     pShow('p-join');
     pRender();
-    loadTurn().finally(pConnect);
+    if (IS_LOCAL) localClientStart(); else loadTurn().finally(pConnect);
     return;
   }
   renderTeamSetup();
